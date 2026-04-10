@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="refresh" content="2">
+  <title>Pico Radar Dashboard</title>
+  <style>
+    body { margin: 0; font-family: system-ui, sans-serif; background: #050814; color: #eef2ff; }
+    .wrapper { max-width: 1000px; margin: 0 auto; padding: 20px; }
+    .header { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
+    .title { margin: 0; font-size: 2rem; letter-spacing: 0.03em; }
+    .meta { color: #a3b1ff; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; margin-top: 20px; }
+    .card { background: rgba(20, 28, 56, 0.95); border: 1px solid rgba(115, 151, 255, 0.18); border-radius: 20px; padding: 18px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.18); }
+    .card h2 { margin-top: 0; font-size: 1.15rem; color: #c6d0ff; }
+    .info-row { display: flex; justify-content: space-between; align-items: center; margin: 10px 0; }
+    .label { color: #89a7ff; }
+    .value { font-weight: 700; font-size: 1.05rem; }
+
+    .radar-card { display: grid; grid-template-columns: 1fr; gap: 12px; }
+    .radar-box { position: relative; width: 100%; padding-top: 100%; background: radial-gradient(circle at center, rgba(73, 143, 255, 0.18), transparent 60%); border: 1px solid rgba(61, 114, 255, 0.28); border-radius: 50%; overflow: hidden; }
+    .radar-grid { position: absolute; top: 0; left: 0; right: 0; bottom: 0; pointer-events: none; }
+    .radar-grid:before, .radar-grid:after { content: ''; position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: rgba(255,255,255,0.08); }
+    .radar-grid:after { left: 0; right: 0; top: 50%; height: 1px; width: 100%; }
+    .range-ring { position: absolute; inset: 15%; border: 1px solid rgba(255,255,255,0.08); border-radius: 50%; }
+    .dot { position: absolute; width: 16px; height: 16px; border-radius: 50%; background: #ff5c79; box-shadow: 0 0 16px rgba(255,92,121,0.55); transform: translate(-50%, -50%); left: {{DOT_X}}%; top: {{DOT_Y}}%; }
+    .status-pill { display: inline-flex; gap: 8px; align-items: center; padding: 8px 14px; border-radius: 999px; background: rgba(255,255,255,0.06); color: #fff; font-size: 0.95rem; }
+    .pill-good { background: rgba(41, 255, 194, 0.16); color: #bffcde; }
+    .pill-warn { background: rgba(255, 203, 93, 0.18); color: #ffda99; }
+    .pill-bad { background: rgba(255, 99, 99, 0.18); color: #ffb4b4; }
+
+    .meter { margin-top: 10px; background: rgba(255,255,255,0.06); border-radius: 999px; overflow: hidden; height: 16px; }
+    .meter-bar { height: 100%; width: {{DISTANCE_PERCENT}}%; background: linear-gradient(90deg, #4fb8ff, #7d5cff); transition: width 0.3s ease; }
+    .status-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .status-chip { padding: 12px 14px; border-radius: 16px; background: rgba(255,255,255,0.04); color: #d7e1ff; display: flex; justify-content: space-between; align-items: center; }
+    .status-chip span:last-child { font-weight: 700; }
+    .blink { animation: pulse 1s infinite alternate; }
+    @keyframes pulse { from { opacity: 0.8; } to { opacity: 1; } }
+  </style>
+</head>
+<body>
+  <div class="wrapper">
+    <div class="header">
+      <div>
+        <h1 class="title">Pico Radar Dashboard</h1>
+        <p class="meta">Connected IP: <strong>{{IP}}</strong> · Lock mode: <strong>{{LOCK}}</strong></p>
+      </div>
+      <div class="status-pill {{STATUS_CLASS}}">{{STATUS_TEXT}}</div>
+    </div>
+
+    <div class="grid">
+      <div class="card radar-card">
+        <h2>Radar view</h2>
+        <div class="radar-box">
+          <div class="radar-grid"></div>
+          <div class="range-ring"></div>
+          <div class="dot"></div>
+        </div>
+        <div class="info-row"><span class="label">Servo X</span><span class="value">{{X_ANGLE}}°</span></div>
+        <div class="info-row"><span class="label">Servo Y</span><span class="value">{{Y_ANGLE}}°</span></div>
+      </div>
+
+      <div class="card">
+        <h2>Object status</h2>
+        <div class="info-row"><span class="label">Distance</span><span class="value">{{DISTANCE}}</span></div>
+        <div class="meter"><div class="meter-bar"></div></div>
+        <div class="info-row"><span class="label">IR lock</span><span class="value">{{LOCK}}</span></div>
+        <div class="status-grid">
+          <div class="status-chip">Left <span>{{LEFT}}</span></div>
+          <div class="status-chip">Right <span>{{RIGHT}}</span></div>
+          <div class="status-chip">Top <span>{{TOP}}</span></div>
+          <div class="status-chip">Bottom <span>{{BOTTOM}}</span></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>LEDs</h2>
+        <div class="status-grid">
+          <div class="status-chip">Red <span>{{RED_LED}}</span></div>
+          <div class="status-chip">White <span>{{WHITE_LED}}</span></div>
+          <div class="status-chip">Blue <span>{{BLUE_LED}}</span></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Controls</h2>
+        <p class="label">Refreshes every 2 seconds automatically.</p>
+        <p class="label">Green means target close, blue means target far, white means tracking.</p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

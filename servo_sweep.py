@@ -2,7 +2,7 @@ from machine import Pin, PWM
 from utime import sleep_ms
 
 # Change this pin if needed
-SERVO_PIN = 0
+SERVO_PIN = 1
 SERVO_FREQ = 50
 SERVO_MIN_US = 500
 SERVO_MAX_US = 2500
@@ -40,7 +40,7 @@ def main():
     servo = Servo(SERVO_PIN)
     print('Starting sweep from 0 to 180...')
     try:
-        for angle in range(84, 93, SWEEP_STEP):
+        for angle in range(71, 76, SWEEP_STEP):
             servo.move(angle)
             sleep_ms(1000)
         print('Sweep complete. Servo stopped at 180.')
