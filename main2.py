@@ -17,12 +17,13 @@ RED_LED_PIN = 22
 WHITE_LED_PIN = 21
 BLUE_LED_PIN = 9
 
+
 # Wi-Fi settings
 USE_AP_MODE = False
 AP_SSID = 'PicoRadar'
 AP_PASSWORD = 'radar1234'
-STA_SSID = 'Mr-CEO'
-STA_PASSWORD = 'iamapythondeveloper'
+STA_SSID = 'dev'
+STA_PASSWORD = '12345678'
 
 DEFAULT_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
 <html>
@@ -82,10 +83,10 @@ DEFAULT_DASHBOARD_TEMPLATE = """<!DOCTYPE html>
         <h2>Object status</h2>
         <div class='row'><span class='label'>Distance</span><span class='value'>{{DISTANCE}}</span></div>
         <div class='meter'><div class='meter-bar'></div></div>
-        <div class='chip'><span>IR left</span><strong>{{LEFT}}</strong></div>
-        <div class='chip'><span>IR right</span><strong>{{RIGHT}}</strong></div>
-        <div class='chip'><span>IR top</span><strong>{{TOP}}</strong></div>
-        <div class='chip'><span>IR bottom</span><strong>{{BOTTOM}}</strong></div>
+        <div class='chip'><span>IR left</span><strong>{{LEFT_IR}}</strong></div>
+        <div class='chip'><span>IR right</span><strong>{{RIGHT_IR}}</strong></div>
+        <div class='chip'><span>IR top</span><strong>{{TOP_IR}}</strong></div>
+        <div class='chip'><span>IR bottom</span><strong>{{BOTTOM_IR}}</strong></div>
       </div>
       <div class='card'>
         <h2>LEDs</h2>
@@ -104,28 +105,22 @@ SERVO_MIN_US = 500
 SERVO_MAX_US = 2500
 SERVO_PERIOD_US = 20_000
 
-# Servo calibration angles for your hacked servos
-CENTER = 90
-CENTER_Y = 90
-TRACKING_STEP = 1
-SCAN_STEP = 1
-SCAN_MIN_ANGLE = 20
-SCAN_MAX_ANGLE = 160
+RIGHT=76
+LEFT=71
+CENTER=75
+UP=90
+DOWN=86
+CENTER_Y=89
+
+
 
 # Radar/tracking constants
 IR_ACTIVE_LOW = True
 CLOSE_DISTANCE_CM = 40
-
-
-def angle_to_duty(angle):
-    """Convert 0-180 degrees into a 16-bit PWM duty value."""
-    if angle < 0:
-        angle = 0
-    elif angle > 180:
-        angle = 180
-    pulse_us = SERVO_MIN_US + (SERVO_MAX_US - SERVO_MIN_US) * angle // 180
-    return int(pulse_us * 65535 // SERVO_PERIOD_US)
-
+TRACKING_STEP = 1
+SCAN_STEP = 1
+SCAN_MIN_ANGLE = 20
+SCAN_MAX_ANGLE = 160
 
 def wifi_connect():
     wlan = None
@@ -156,11 +151,23 @@ def wifi_connect():
     return ip
 
 
+
+def angle_to_duty(angle):
+    """Convert 0-180 degrees into a 16-bit PWM duty value."""
+    if angle < 0:
+        angle = 0
+    elif angle > 180:
+        angle = 180
+    pulse_us = SERVO_MIN_US + (SERVO_MAX_US - SERVO_MIN_US) * angle // 180
+    duty_u16 = int(pulse_us * 65535 // SERVO_PERIOD_US)
+    return duty_u16
+
+
 class Servo:
     def __init__(self, pin_num):
         self.pwm = PWM(Pin(pin_num))
         self.pwm.freq(SERVO_FREQ)
-        self.angle = CENTER
+        self.angle = 90
         self.move(self.angle)
 
     def move(self, angle):
@@ -200,6 +207,7 @@ class Ultrasonic:
         if pulse_time < 0:
             return None
 
+        # speed of sound 343 m/s = 0.0343 cm/us, divide by 2 for round trip
         return pulse_time * 0.0343 / 2
 
 
@@ -244,30 +252,29 @@ class StatusLEDs:
         self.blue.value(1 if blue else 0)
 
 
-class RadarDashboard:
+class DashboardServer:
     def __init__(self, ip):
         self.ip = ip
-        self.ultrasonic = Ultrasonic(TRIG_PIN, ECHO_PIN)
-        self.ir = IRArray(IR_LEFT_PIN, IR_RIGHT_PIN, IR_TOP_PIN, IR_BOTTOM_PIN)
-        self.servo_x = Servo(SERVO_X_PIN)
-        self.servo_y = Servo(SERVO_Y_PIN)
-        self.leds = StatusLEDs(RED_LED_PIN, WHITE_LED_PIN, BLUE_LED_PIN)
-        self.led_flash = False
-        self.scan_dir_x = 1
-        self.distance = None
-        self.tracking = False
-        self.ir_states = {'left': False, 'right': False, 'top': False, 'bottom': False}
-        self.lock_status = 'searching'
-        self.template = self._load_template()
         self.server_socket = None
+        self.template = self._load_template()
+        self.state = {
+            'distance': None,
+            'tracking': False,
+            'lock_status': 'searching',
+            'servo_x_angle': CENTER,
+            'servo_y_angle': CENTER_Y,
+            'ir_states': {'left': False, 'right': False, 'top': False, 'bottom': False},
+            'red_led': False,
+            'white_led': False,
+            'blue_led': False,
+        }
 
     def _load_template(self):
         search_paths = ['dashboard_template.html', './dashboard_template.html', '/dashboard_template.html']
         try:
-            cwd = os.getcwd()
-            search_paths.append(cwd + '/dashboard_template.html')
+            search_paths.append(os.getcwd() + '/dashboard_template.html')
         except OSError:
-            cwd = None
+            pass
 
         for path in search_paths:
             try:
@@ -281,89 +288,50 @@ class RadarDashboard:
         return DEFAULT_DASHBOARD_TEMPLATE
 
     def _render_template(self, values):
-        if not self.template:
-            return None
         html = self.template
         for key, val in values.items():
             html = html.replace('{{%s}}' % key, str(val))
         return html
 
-    def update(self):
-        self.distance = self.ultrasonic.distance_cm()
-        self.tracking, self.ir_states = self.ir.any_active()
-        self.lock_status = 'tracking' if self.tracking else 'searching'
-
-        red_state = False
-        blue_state = False
-        white_state = False
-
-        if self.tracking:
-            if self.ir_states['left']:
-                self.servo_x.move(self.servo_x.angle - TRACKING_STEP)
-            elif self.ir_states['right']:
-                self.servo_x.move(self.servo_x.angle + TRACKING_STEP)
-            else:
-                self.servo_x.move_toward(CENTER, TRACKING_STEP)
-
-            if self.ir_states['top']:
-                self.servo_y.move(self.servo_y.angle - TRACKING_STEP)
-            elif self.ir_states['bottom']:
-                self.servo_y.move(self.servo_y.angle + TRACKING_STEP)
-            else:
-                self.servo_y.move_toward(CENTER_Y, TRACKING_STEP)
-
-            white_state = self.led_flash
-            if self.distance is not None:
-                if self.distance <= CLOSE_DISTANCE_CM:
-                    red_state = self.led_flash
-                else:
-                    blue_state = self.led_flash
-        else:
-            next_angle = self.servo_x.angle + self.scan_dir_x * SCAN_STEP
-            if next_angle < SCAN_MIN_ANGLE or next_angle > SCAN_MAX_ANGLE:
-                self.scan_dir_x *= -1
-                next_angle = self.servo_x.angle + self.scan_dir_x * SCAN_STEP
-            self.servo_x.move(next_angle)
-            self.servo_y.move_toward(CENTER_Y, TRACKING_STEP)
-
-        self.leds.set(red=red_state, white=white_state, blue=blue_state)
-        self.led_flash = not self.led_flash
+    def update_state(self, distance, tracking, lock_status, servo_x_angle, servo_y_angle,
+                     ir_states, red_led, white_led, blue_led):
+        self.state['distance'] = distance
+        self.state['tracking'] = tracking
+        self.state['lock_status'] = lock_status
+        self.state['servo_x_angle'] = servo_x_angle
+        self.state['servo_y_angle'] = servo_y_angle
+        self.state['ir_states'] = ir_states
+        self.state['red_led'] = red_led
+        self.state['white_led'] = white_led
+        self.state['blue_led'] = blue_led
 
     def status_html(self):
-        distance_text = 'timeout' if self.distance is None else '{:.1f} cm'.format(self.distance)
-        distance_percent = 0 if self.distance is None else min(100, int(self.distance / 200 * 100))
-        status_class = 'pill-good' if self.tracking else 'pill-warn'
-        status_text = 'Tracking' if self.tracking else 'Searching'
+        distance = self.state['distance']
+        distance_text = 'timeout' if distance is None else '{:.1f} cm'.format(distance)
+        distance_percent = 0 if distance is None else min(100, int(distance / 200 * 100))
+        tracking = self.state['tracking']
         values = {
             'IP': self.ip,
-            'STATUS_CLASS': status_class,
-            'STATUS_TEXT': status_text,
+            'STATUS_CLASS': 'pill-green' if tracking else 'pill-blue',
+            'STATUS_TEXT': 'Tracking' if tracking else 'Searching',
             'DISTANCE': distance_text,
-            'LOCK': self.lock_status,
-            'X_ANGLE': self.servo_x.angle,
-            'Y_ANGLE': self.servo_y.angle,
-            'LEFT': 'ON' if self.ir_states['left'] else 'OFF',
-            'RIGHT': 'ON' if self.ir_states['right'] else 'OFF',
-            'TOP': 'ON' if self.ir_states['top'] else 'OFF',
-            'BOTTOM': 'ON' if self.ir_states['bottom'] else 'OFF',
-            'RED_LED': 'ON' if self.leds.red.value() else 'OFF',
-            'WHITE_LED': 'ON' if self.leds.white.value() else 'OFF',
-            'BLUE_LED': 'ON' if self.leds.blue.value() else 'OFF',
-            'DOT_X': min(100, max(0, int(self.servo_x.angle / 180 * 100))),
-            'DOT_Y': min(100, max(0, int(self.servo_y.angle / 180 * 100))),
+            'LOCK': self.state['lock_status'],
+            'X_ANGLE': self.state['servo_x_angle'],
+            'Y_ANGLE': self.state['servo_y_angle'],
+            'LEFT_IR': 'ON' if self.state['ir_states']['left'] else 'OFF',
+            'RIGHT_IR': 'ON' if self.state['ir_states']['right'] else 'OFF',
+            'TOP_IR': 'ON' if self.state['ir_states']['top'] else 'OFF',
+            'BOTTOM_IR': 'ON' if self.state['ir_states']['bottom'] else 'OFF',
+            'RED_LED': 'ON' if self.state['red_led'] else 'OFF',
+            'WHITE_LED': 'ON' if self.state['white_led'] else 'OFF',
+            'BLUE_LED': 'ON' if self.state['blue_led'] else 'OFF',
+            'DOT_X': min(100, max(0, int(self.state['servo_x_angle'] / 180 * 100))),
+            'DOT_Y': min(100, max(0, int(self.state['servo_y_angle'] / 180 * 100))),
             'DISTANCE_PERCENT': distance_percent,
         }
-        html = self._render_template(values)
-        if html is not None:
-            return html
+        return self._render_template(values)
 
-        return """<!DOCTYPE html>
-<html>
-<head><meta charset='utf-8'><title>Pico Radar Dashboard</title></head>
-<body><pre>Dashboard template missing</pre></body>
-</html>"""
-
-    def start_server(self):
+    def start(self):
         addr = socket.getaddrinfo('0.0.0.0', 80)[0][-1]
         self.server_socket = socket.socket()
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -373,16 +341,17 @@ class RadarDashboard:
         print('Dashboard server running on http://%s/' % self.ip)
 
     def handle_clients(self):
+        if self.server_socket is None:
+            return
         try:
             conn, addr = self.server_socket.accept()
         except OSError:
             return
 
         try:
-            request = conn.recv(1024)
-            response = self.status_html()
+            conn.recv(1024)
             conn.send('HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n\r\n')
-            conn.send(response)
+            conn.send(self.status_html())
         except OSError:
             pass
         finally:
@@ -391,26 +360,95 @@ class RadarDashboard:
     def stop(self):
         if self.server_socket:
             self.server_socket.close()
-        self.leds.all_off()
-        self.servo_x.deinit()
-        self.servo_y.deinit()
+            self.server_socket = None
 
 
 def main():
     ip = wifi_connect()
-    dashboard = RadarDashboard(ip)
-    dashboard.start_server()
+    ultrasonic = Ultrasonic(TRIG_PIN, ECHO_PIN)
+    ir = IRArray(IR_LEFT_PIN, IR_RIGHT_PIN, IR_TOP_PIN, IR_BOTTOM_PIN)
+    servo_x = Servo(SERVO_X_PIN)
+    servo_y = Servo(SERVO_Y_PIN)
+    leds = StatusLEDs(RED_LED_PIN, WHITE_LED_PIN, BLUE_LED_PIN)
+    dashboard = DashboardServer(ip)
+    dashboard.start()
 
+    print('Started robot controller')
+    led_flash = False
+    scan_dir_x = 1
+    servo_x.move(CENTER)
+    servo_y.move(CENTER_Y)
     try:
         while True:
-            dashboard.update()
+            dist = ultrasonic.distance_cm()
+            tracking, ir_states = ir.any_active()
+            print('IR states:', ir_states)
+
+            red_state = True
+            blue_state = True
+            white_state = True
+
+            if tracking:
+                # use the IR sensors to slowly center the object
+                if ir_states['left']:
+                    servo_x.move(RIGHT)
+                elif ir_states['right']:
+                    servo_x.move(LEFT)
+                else:
+                    servo_x.move_toward(CENTER)
+
+                if ir_states['top']:
+                    servo_y.move(UP)
+                elif ir_states['bottom']:
+                    servo_y.move(DOWN)
+                else:
+                    servo_y.move_toward(CENTER_Y)
+
+                white_state = led_flash
+                if dist is not None:
+                    if dist <= CLOSE_DISTANCE_CM:
+                        red_state = led_flash
+                    else:
+                        blue_state = led_flash
+
+            else:
+                servo_x.move(CENTER)
+                servo_y.move(CENTER_Y)
+                # no object locked: scan slowly like a radar sweep
+                # servo_x.move(servo_x.angle + scan_dir_x * SCAN_STEP)
+                # if servo_x.angle <= SCAN_MIN_ANGLE or servo_x.angle >= SCAN_MAX_ANGLE:
+                scan_dir_x *= -1
+                # servo_y.move(90)
+
+            leds.set(red=red_state, white=white_state, blue=blue_state)
+            dashboard.update_state(
+                dist,
+                tracking,
+                'tracking' if tracking else 'searching',
+                servo_x.angle,
+                servo_y.angle,
+                ir_states,
+                red_state,
+                white_state,
+                blue_state,
+            )
             dashboard.handle_clients()
-            sleep_ms(200)
+
+            if dist is None:
+                print('Distance: timeout')
+            else:
+                print('Distance: {:.1f} cm'.format(dist))
+
+            led_flash = not led_flash
+            sleep_ms(250)
     except KeyboardInterrupt:
         pass
     finally:
         dashboard.stop()
-        print('Stopped radar dashboard')
+        leds.all_off()
+        servo_x.deinit()
+        servo_y.deinit()
+        print('Stopped robot controller')
 
 
 if __name__ == '__main__':
